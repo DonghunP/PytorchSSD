@@ -6,6 +6,28 @@ import torch.nn.functional as F
 from layers import *
 from .base_models import vgg, vgg_base
 
+class BasicConv(nn.Module):
+
+    def __init__(self, in_planes, out_planes, kernel_size, stride=1, padding=0, dilation=1, groups=1, relu=False,
+                 bn=False, bias=True, up_size=0):
+        super(BasicConv, self).__init__()
+        self.out_channels = out_planes
+        self.kernel_size = kernel_size
+        self.conv = nn.Conv2d(in_planes, out_planes, kernel_size=kernel_size, stride=stride, padding=padding, dilation=dilation, groups=groups, bias=bias)
+        self.bn = nn.BatchNorm2d(out_planes, eps=1e-5, momentum=0.01, affine=True) if bn else None
+        self.relu = nn.ReLU(inplace=False) if relu else None # True->False
+        self.up_size = up_size
+        self.up_sample = nn.Upsample(size=(up_size, up_size), mode='bilinear') if up_size != 0 else None  # nn.Upsample --> nn.functional.interpolate
+                                                                                                                        # mode='bilinear' --> align_corners=False
+    def forward(self, x):
+        x = self.conv(x)
+        if self.bn is not None:
+            x = self.bn(x)
+        if self.relu is not None:
+            x = self.relu(x)
+        if self.up_size > 0:
+            x = self.up_sample(x)
+        return x
 
 class SSD(nn.Module):
     """Single Shot Multibox Architecture
@@ -24,7 +46,7 @@ class SSD(nn.Module):
         head: "multibox head" consists of loc and conf conv layers
     """
 
-    def __init__(self, base, extras, head, num_classes,size):
+    def __init__(self, base, extras, head, conv3_3, num_classes,size):
         super(SSD, self).__init__()
         self.num_classes = num_classes
         # TODO: implement __call__ in PriorBox
@@ -35,6 +57,7 @@ class SSD(nn.Module):
         # Layer learns to scale the l2 normalized features from conv4_3
         self.extras = nn.ModuleList(extras)
         self.L2Norm = L2Norm(512, 20)
+        self.conv3_3 = conv3_3
 
         self.loc = nn.ModuleList(head[0])
         self.conf = nn.ModuleList(head[1])
@@ -65,20 +88,22 @@ class SSD(nn.Module):
         conf = list()
 
         # apply vgg up to conv4_3 relu
-        for k in range(23):
+        for k in range(15):
             x = self.vgg[k](x)
 
-        s = self.L2Norm(x)
-        features.append(s)
+
+        for i, conv in enumerate(self.conv3_3):
+            s = conv(x)
+            features.append(self.L2Norm(s))
 
         # apply vgg up to fc7
-        for k in range(23, len(self.vgg)):
+        for k in range(15, len(self.vgg)):
             x = self.vgg[k](x)
         features.append(x)
 
         # apply extra layers and cache source layer outputs
         for k, v in enumerate(self.extras):
-            x = F.relu(v(x), inplace=True)
+            x = F.relu(v(x), inplace=False)
             if k % 2 == 1:
                 features.append(x)
 
@@ -133,9 +158,9 @@ def add_extras(cfg, i, batch_norm=False, size=300):
 def multibox(vgg, extra_layers, cfg, num_classes):
     loc_layers = []
     conf_layers = []
-    vgg_source = [24, -2] # [24, -2] -> [21, -2]
+    vgg_source = [14, -2] # [24, -2] -> [21, -2] -> [14, -2]
     for k, v in enumerate(vgg_source):
-        loc_layers += [nn.Conv2d(vgg[v].out_channels, cfg[k] * 4, kernel_size=3, padding=1)]
+        loc_layers += [nn.Conv2d(vgg[v].out_channels, cfg[k] * 4, kernel_size=3, padding=1)] # Why 24? If 24 then, vgg[v].out_channels might be '512' isn't it??
         conf_layers += [nn.Conv2d(vgg[v].out_channels, cfg[k] * num_classes, kernel_size=3, padding=1)]
     for k, v in enumerate(extra_layers[1::2], 2):
         loc_layers += [nn.Conv2d(v.out_channels, cfg[k] * 4, kernel_size=3, padding=1)]
@@ -152,12 +177,21 @@ mbox = {
     '512': [6, 6, 6, 6, 6, 4, 4],
 }
 
+def conv3_3(vgg, size):
+    if size == 300:
+        up_size = 38
+    elif size == 512:
+        up_size = 64
+
+    ff_layers = []
+    ff_layers += [BasicConv(vgg[14].out_channels, 512, stride=2, kernel_size=1, padding=0)] #24 -> 21
+    return ff_layers
 
 def build_net(size=300, num_classes=21):
     if size != 300 and size != 512:
         print("Error: Sorry only SSD300 and SSD512 is supported currently!")
         return
 
-    return SSD(*multibox(vgg(vgg_base[str(size)], 3),
-                         add_extras(extras[str(size)], 1024, size=size),
-                         mbox[str(size)], num_classes), num_classes=num_classes,size=size)
+    return SSD(*multibox(vgg(vgg_base[str(size)], 3), add_extras(extras[str(size)], 1024, size=size), mbox[str(size)], num_classes),
+               conv3_3(vgg(vgg_base[str(size)], 3), size),
+               num_classes=num_classes,size=size)

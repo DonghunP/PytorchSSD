@@ -20,58 +20,41 @@ from layers.modules import MultiBoxLoss
 from utils.nms_wrapper import nms
 from utils.timer import Timer
 
-
+import os
+os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0,1"
+#device = torch.device("cuda:2")
+# -------------------------------------------------------------------------------------------------------------------- #
 def str2bool(v):
     return v.lower() in ("yes", "true", "t", "1")
 
 
-parser = argparse.ArgumentParser(
-    description='Receptive Field Block Net Training')
-parser.add_argument('-v', '--version', default='SSD_vgg',
-                    help='RFB_vgg ,RFB_E_vgg RFB_mobile SSD_vgg version.')
-parser.add_argument('-s', '--size', default='512',
-                    help='300 or 512 input size.')
-parser.add_argument('-d', '--dataset', default='COCO',
-                    help='VOC or COCO dataset')
-parser.add_argument(
-    '--basenet', default='weights/vgg16_reducedfc.pth', help='pretrained base model')
-parser.add_argument('--jaccard_threshold', default=0.5,
-                    type=float, help='Min Jaccard index for matching')
-parser.add_argument('-b', '--batch_size', default=8,
-                    type=int, help='Batch size for training')
-parser.add_argument('--num_workers', default=4,
-                    type=int, help='Number of workers used in dataloading')
-parser.add_argument('--cuda', default=True,
-                    type=bool, help='Use cuda to train model')
-parser.add_argument('--ngpu', default=2, type=int, help='gpus')
-parser.add_argument('--lr', '--learning-rate',
-                    default=4e-3, type=float, help='initial learning rate')
+parser = argparse.ArgumentParser( description='Receptive Field Block Net Training')
+parser.add_argument('-v', '--version', default='RFB_vgg', help='RFB_vgg ,RFB_E_vgg RFB_mobile SSD_vgg version.')
+parser.add_argument('-s', '--size', default='300', help='300 or 512 input size.')
+parser.add_argument('-d', '--dataset', default='VOC', help='VOC or COCO dataset')
+parser.add_argument('--basenet', default='weights/vgg16_reducedfc.pth', help='pretrained base model')
+parser.add_argument('--jaccard_threshold', default=0.5, type=float, help='Min Jaccard index for matching')
+parser.add_argument('-b', '--batch_size', default=64, type=int, help='Batch size for training')
+parser.add_argument('--num_workers', default=4, type=int, help='Number of workers used in dataloading')
+parser.add_argument('--cuda', default=True, type=bool, help='Use cuda to train model')
+parser.add_argument('--ngpu', default=3, type=int, help='gpus')
+parser.add_argument('--lr', '--learning-rate', default=4e-3, type=float, help='initial learning rate')
 parser.add_argument('--momentum', default=0.9, type=float, help='momentum')
-
 parser.add_argument('--resume_net', default=False, help='resume net for retraining')
-parser.add_argument('--resume_epoch', default=0,
-                    type=int, help='resume iter for retraining')
-
-parser.add_argument('-max', '--max_epoch', default=300,
-                    type=int, help='max epoch for retraining')
-parser.add_argument('--weight_decay', default=5e-4,
-                    type=float, help='Weight decay for SGD')
-parser.add_argument('-we', '--warm_epoch', default=1,
-                    type=int, help='max epoch for retraining')
-parser.add_argument('--gamma', default=0.1,
-                    type=float, help='Gamma update for SGD')
-parser.add_argument('--log_iters', default=True,
-                    type=bool, help='Print the loss at each iteration')
-parser.add_argument('--save_folder', default='weights/',
-                    help='Location to save checkpoint models')
-parser.add_argument('--date', default='1213')
-parser.add_argument('--save_frequency', default=10)
-parser.add_argument('--retest', default=False, type=bool,
-                    help='test cache results')
-parser.add_argument('--test_frequency', default=10)
+parser.add_argument('--resume_epoch', default=0, type=int, help='resume iter for retraining')
+parser.add_argument('-max', '--max_epoch', default=300, type=int, help='max epoch for retraining')
+parser.add_argument('--weight_decay', default=5e-4, type=float, help='Weight decay for SGD')
+parser.add_argument('-we', '--warm_epoch', default=6, type=int, help='max epoch for retraining')
+parser.add_argument('--gamma', default=0.1, type=float, help='Gamma update for SGD')
+parser.add_argument('--log_iters', default=True, type=bool, help='Print the loss at each iteration')
+parser.add_argument('--save_folder', default='weights/', help='Location to save checkpoint models')
+parser.add_argument('--date', default='0928')
+parser.add_argument('--save_frequency', default=30)
+parser.add_argument('--retest', default=False, type=bool, help='test cache results')
+parser.add_argument('--test_frequency', default=30)
 parser.add_argument('--visdom', default=False, type=str2bool, help='Use visdom to for loss visualization')
-parser.add_argument('--send_images_to_visdom', type=str2bool, default=False,
-                    help='Sample a random image from each 10th batch, send it to visdom after augmentations step')
+parser.add_argument('--send_images_to_visdom', type=str2bool, default=False, help='Sample a random image from each 10th batch, send it to visdom after augmentations step')
 args = parser.parse_args()
 
 save_folder = os.path.join(args.save_folder, args.version + '_' + args.size, args.date)
@@ -89,6 +72,8 @@ else:
     train_sets = [('2017', 'train')]
     cfg = (COCO_300, COCO_512)[args.size == '512']
 
+# -------------------------------------------------------------------------------------------------------------------- #
+# Model Choose
 if args.version == 'RFB_vgg':
     from models.RFB_Net_vgg import build_net
 elif args.version == 'RFB_E_vgg':
@@ -105,13 +90,17 @@ elif args.version == 'FRFBSSD_vgg':
     from models.FRFBSSD_vgg import build_net
 else:
     print('Unkown version!')
+# -------------------------------------------------------------------------------------------------------------------- #
 rgb_std = (1, 1, 1)
 img_dim = (300, 512)[args.size == '512']
 if 'vgg' in args.version:
     rgb_means = (104, 117, 123)
 elif 'mobile' in args.version:
     rgb_means = (103.94, 116.78, 123.68)
+# -------------------------------------------------------------------------------------------------------------------- #
 
+# -------------------------------------------------------------------------------------------------------------------- #
+# Model Initialize
 p = (0.6, 0.2)[args.version == 'RFB_mobile']
 num_classes = (21, 81)[args.dataset == 'COCO']
 batch_size = args.batch_size
@@ -120,31 +109,31 @@ gamma = 0.1
 momentum = 0.9
 if args.visdom:
     import visdom
-
     viz = visdom.Visdom()
 
 net = build_net(img_dim, num_classes)
 print(net)
+# -------------------------------------------------------------------------------------------------------------------- #
+
+# -------------------------------------------------------------------------------------------------------------------- #
+# Load weight
 if not args.resume_net:
     base_weights = torch.load(args.basenet)
     print('Loading base network...')
-    net.base.load_state_dict(base_weights)
-
+    net.base.load_state_dict(base_weights) # base --> vgg
 
     def xavier(param):
         init.xavier_uniform(param)
-
 
     def weights_init(m):
         for key in m.state_dict():
             if key.split('.')[-1] == 'weight':
                 if 'conv' in key:
-                    init.kaiming_normal(m.state_dict()[key], mode='fan_out')
+                    init.kaiming_normal_(m.state_dict()[key], mode='fan_out')
                 if 'bn' in key:
                     m.state_dict()[key][...] = 1
             elif key.split('.')[-1] == 'bias':
                 m.state_dict()[key][...] = 0
-
 
     print('Initializing weights...')
     # initialize newly added layers' weights with kaiming_normal method
@@ -152,23 +141,21 @@ if not args.resume_net:
     net.loc.apply(weights_init)
     net.conf.apply(weights_init)
     if args.version == 'FSSD_vgg' or args.version == 'FRFBSSD_vgg':
-        net.ft_module.apply(weights_init)
+        net.ff_layers.apply(weights_init)
         net.pyramid_ext.apply(weights_init)
     if 'RFB' in args.version:
         net.Norm.apply(weights_init)
     if args.version == 'RFB_E_vgg':
         net.reduce.apply(weights_init)
         net.up_reduce.apply(weights_init)
-
 else:
     # load resume network
-    resume_net_path = os.path.join(save_folder, args.version + '_' + args.dataset + '_epoches_' + \
-                                   str(args.resume_epoch) + '.pth')
+    resume_net_path = os.path.join(save_folder, args.version + '_' + args.dataset + '_epoches_' + str(args.resume_epoch) + '.pth')
     print('Loading resume network', resume_net_path)
     state_dict = torch.load(resume_net_path)
+
     # create new OrderedDict that does not contain `module.`
     from collections import OrderedDict
-
     new_state_dict = OrderedDict()
     for k, v in state_dict.items():
         head = k[:7]
@@ -178,24 +165,29 @@ else:
             name = k
         new_state_dict[name] = v
     net.load_state_dict(new_state_dict)
-
+# -------------------------------------------------------------------------------------------------------------------- #
+#net.to(device)
 if args.ngpu > 1:
     net = torch.nn.DataParallel(net, device_ids=list(range(args.ngpu)))
+    #net = torch.nn.DataParallel(net, output_device=2)
+    #net = torch.nn.DataParallel(net)
 
 if args.cuda:
     net.cuda()
     cudnn.benchmark = True
 
+# -------------------------------------------------------------------------------------------------------------------- #
+# Loss and Anchor
 detector = Detect(num_classes, 0, cfg)
-optimizer = optim.SGD(net.parameters(), lr=args.lr,
-                      momentum=args.momentum, weight_decay=args.weight_decay)
-# optimizer = optim.RMSprop(net.parameters(), lr=args.lr,alpha = 0.9, eps=1e-08,
-#                      momentum=args.momentum, weight_decay=args.weight_decay)
+optimizer = optim.SGD(net.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.weight_decay)
 
 criterion = MultiBoxLoss(num_classes, 0.5, True, 0, True, 3, 0.5, False)
 priorbox = PriorBox(cfg)
-priors = Variable(priorbox.forward(), volatile=True)
-# dataset
+with torch.no_grad():
+    priors = priorbox.forward()
+# -------------------------------------------------------------------------------------------------------------------- #
+# -------------------------------------------------------------------------------------------------------------------- #
+# Load dataset
 print('Loading Dataset...')
 if args.dataset == 'VOC':
     testset = VOCDetection(
@@ -210,16 +202,21 @@ elif args.dataset == 'COCO':
 else:
     print('Only VOC and COCO are supported now!')
     exit()
+# -------------------------------------------------------------------------------------------------------------------- #
 
-
+# -------------------------------------------------------------------------------------------------------------------- #
+from utils.tuto4_logger import Logger_tf
+logger = Logger_tf(save_folder)
+# -------------------------------------------------------------------------------------------------------------------- #
 def train():
     net.train()
     # loss counters
     epoch = 0
     if args.resume_net:
         epoch = 0 + args.resume_epoch
-    epoch_size = len(train_dataset) // args.batch_size
+    epoch_size = len(train_dataset) // args.batch_size # How many batch size is needed.
     max_iter = args.max_epoch * epoch_size
+    print('max_iter : ', max_iter)
 
     stepvalues_VOC = (150 * epoch_size, 200 * epoch_size, 250 * epoch_size)
     stepvalues_COCO = (90 * epoch_size, 120 * epoch_size, 140 * epoch_size)
@@ -227,6 +224,7 @@ def train():
     print('Training', args.version, 'on', train_dataset.name)
     step_index = 0
 
+    ## To visualize
     if args.visdom:
         # initialize visdom loss plot
         lot = viz.line(
@@ -259,43 +257,48 @@ def train():
     mean_loss_c = 0
     mean_loss_l = 0
     for iteration in range(start_iter, max_iter + 10):
-        if (iteration % epoch_size == 0):
+        # -------------------------------------------------------------------------------------------------------------------- #
+        if iteration % epoch_size == 0:
             # create batch iterator
-            batch_iterator = iter(data.DataLoader(train_dataset, batch_size,
-                                                  shuffle=True, num_workers=args.num_workers,
-                                                  collate_fn=detection_collate))
-            loc_loss = 0
-            conf_loss = 0
+            batch_iterator = iter(data.DataLoader(train_dataset, batch_size, shuffle=True, num_workers=args.num_workers, collate_fn=detection_collate))
+            # loc_loss = 0
+            # conf_loss = 0
+
             if epoch % args.save_frequency == 0 and epoch > 0:
-                torch.save(net.state_dict(), os.path.join(save_folder, args.version + '_' + args.dataset + '_epoches_' +
-                                                          repr(epoch) + '.pth'))
+                torch.save(net.state_dict(), os.path.join(save_folder, args.version + '_' + args.dataset + '_epoches_' + repr(epoch) + '.pth'))
+            ## Evaluation
             if epoch % args.test_frequency == 0 and epoch > 0:
                 net.eval()
                 top_k = (300, 200)[args.dataset == 'COCO']
                 if args.dataset == 'VOC':
-                    APs, mAP = test_net(test_save_dir, net, detector, args.cuda, testset,
-                                        BaseTransform(net.module.size, rgb_means, rgb_std, (2, 0, 1)),
-                                        top_k, thresh=0.01)
+                    # net.module.size -> net.size.
+                    APs, mAP = test_net(test_save_dir, net, detector, args.cuda, testset, BaseTransform(net.module.size, rgb_means, rgb_std, (2, 0, 1)), top_k, thresh=0.01)
                     APs = [str(num) for num in APs]
                     mAP = str(mAP)
                     log_file.write(str(iteration) + ' APs:\n' + '\n'.join(APs))
-                    log_file.write('mAP:\n' + mAP + '\n')
+                    log_file.write('\n mAP:\n' + mAP + '\n')
+
+                    # -------------------------------------------------------------------------------------------------------------------- #
+                    # 1. Log scalar values (scalar summary)
+                    # info = {'accuracy': mAP}
+                    #
+                    # for tag, value in info.items():
+                    #     logger.scalar_summary(tag, value, iteration + 1)
+                    # -------------------------------------------------------------------------------------------------------------------- #
+
                 else:
-                    test_net(test_save_dir, net, detector, args.cuda, testset,
-                             BaseTransform(net.module.size, rgb_means, rgb_std, (2, 0, 1)),
-                             top_k, thresh=0.01)
-
+                    test_net(test_save_dir, net, detector, args.cuda, testset, BaseTransform(net.module.size, rgb_means, rgb_std, (2, 0, 1)), top_k, thresh=0.01)
                 net.train()
-            epoch += 1
 
+            epoch += 1
+        # -------------------------------------------------------------------------------------------------------------------- #
         load_t0 = time.time()
         if iteration in stepvalues:
             step_index = stepvalues.index(iteration) + 1
             if args.visdom:
                 viz.line(
                     X=torch.ones((1, 3)).cpu() * epoch,
-                    Y=torch.Tensor([mean_loss_l, mean_loss_c,
-                                    mean_loss_l + mean_loss_c]).unsqueeze(0).cpu() / epoch_size,
+                    Y=torch.Tensor([mean_loss_l, mean_loss_c, mean_loss_l + mean_loss_c]).unsqueeze(0).cpu() / epoch_size,
                     win=epoch_lot,
                     update='append'
                 )
@@ -304,14 +307,13 @@ def train():
         # load train data
         images, targets = next(batch_iterator)
 
-        # print(np.sum([torch.sum(anno[:,-1] == 2) for anno in targets]))
-
         if args.cuda:
-            images = Variable(images.cuda())
-            targets = [Variable(anno.cuda(), volatile=True) for anno in targets]
+            images = images.cuda()
+            targets = [ann.cuda() for ann in targets]
         else:
-            images = Variable(images)
-            targets = [Variable(anno, volatile=True) for anno in targets]
+            images = images
+            targets = [ann for ann in targets]
+
         # forward
         out = net(images)
         # backprop
@@ -320,34 +322,40 @@ def train():
         loss_l, loss_c = criterion(out, priors, targets)
         # odm branch loss
 
-        mean_loss_c += loss_c.data[0]
-        mean_loss_l += loss_l.data[0]
+        mean_loss_c += loss_c.item()
+        mean_loss_l += loss_l.item()
 
         loss = loss_l + loss_c
         loss.backward()
         optimizer.step()
         load_t1 = time.time()
+        # -------------------------------------------------------------------------------------------------------------------- #
+        if iteration % epoch_size == 0:
+            # 1. Log scalar values (scalar summary)
+            info = {'loss': loss.item(), 'loc_loss': loss_l.item(), 'conf_loss': loss_c.item()}
+
+            for tag, value in info.items():
+                logger.scalar_summary(tag, value, iteration + 1)
+        # -------------------------------------------------------------------------------------------------------------------- #
+
+        # -------------------------------------------------------------------------------------------------------------------- #
         if iteration % 10 == 0:
             print('Epoch:' + repr(epoch) + ' || epochiter: ' + repr(iteration % epoch_size) + '/' + repr(epoch_size)
-                  + '|| Totel iter ' +
-                  repr(iteration) + ' || L: %.4f C: %.4f||' % (
-                      mean_loss_l / 10, mean_loss_c / 10) +
+                  + '|| Totel iter ' + repr(iteration) + ' || L: %.4f C: %.4f||' % (mean_loss_l / 10, mean_loss_c / 10) +
                   'Batch time: %.4f sec. ||' % (load_t1 - load_t0) + 'LR: %.8f' % (lr))
-            log_file.write(
-                'Epoch:' + repr(epoch) + ' || epochiter: ' + repr(iteration % epoch_size) + '/' + repr(epoch_size)
-                + '|| Totel iter ' +
-                repr(iteration) + ' || L: %.4f C: %.4f||' % (
-                    mean_loss_l / 10, mean_loss_c / 10) +
-                'Batch time: %.4f sec. ||' % (load_t1 - load_t0) + 'LR: %.8f' % (lr) + '\n')
+
+            log_file.write('Epoch:' + repr(epoch) + ' || epochiter: ' + repr(iteration % epoch_size) + '/' + repr(epoch_size)
+                + '|| Totel iter ' +repr(iteration) + ' || L: %.4f C: %.4f||' % (
+                    mean_loss_l / 10, mean_loss_c / 10) +'Batch time: %.4f sec. ||' % (load_t1 - load_t0) + 'LR: %.8f' % (lr) + '\n')
 
             mean_loss_c = 0
             mean_loss_l = 0
             if args.visdom and args.send_images_to_visdom:
                 random_batch_index = np.random.randint(images.size(0))
                 viz.image(images.data[random_batch_index].cpu().numpy())
+        # -------------------------------------------------------------------------------------------------------------------- #
     log_file.close()
-    torch.save(net.state_dict(), os.path.join(save_folder,
-                                              'Final_' + args.version + '_' + args.dataset + '.pth'))
+    torch.save(net.state_dict(), os.path.join(save_folder,'Final_' + args.version + '_' + args.dataset + '.pth'))
 
 
 def adjust_learning_rate(optimizer, gamma, epoch, step_index, iteration, epoch_size):
@@ -370,8 +378,7 @@ def test_net(save_folder, net, detector, cuda, testset, transform, max_per_image
     # dump predictions and assoc. ground truth to text file for now
     num_images = len(testset)
     num_classes = (21, 81)[args.dataset == 'COCO']
-    all_boxes = [[[] for _ in range(num_images)]
-                 for _ in range(num_classes)]
+    all_boxes = [[[] for _ in range(num_images)] for _ in range(num_classes)]
 
     _t = {'im_detect': Timer(), 'misc': Timer()}
     det_file = os.path.join(save_folder, 'detections.pkl')
@@ -399,12 +406,13 @@ def test_net(save_folder, net, detector, cuda, testset, transform, max_per_image
         boxes = boxes.cpu().numpy()
         scores = scores.cpu().numpy()
         # scale each detection back up to the image
-        scale = torch.Tensor([img.shape[1], img.shape[0],
-                              img.shape[1], img.shape[0]]).cpu().numpy()
+        scale = torch.Tensor([img.shape[1], img.shape[0], img.shape[1], img.shape[0]]).cpu().numpy()
         boxes *= scale
 
         _t['misc'].tic()
+        #--------------------------------------------------------------------------------------------------------------#
 
+        #--------------------------------------------------------------------------------------------------------------#
         for j in range(1, num_classes):
             inds = np.where(scores[:, j] > thresh)[0]
             if len(inds) == 0:
@@ -412,8 +420,7 @@ def test_net(save_folder, net, detector, cuda, testset, transform, max_per_image
                 continue
             c_bboxes = boxes[inds]
             c_scores = scores[inds, j]
-            c_dets = np.hstack((c_bboxes, c_scores[:, np.newaxis])).astype(
-                np.float32, copy=False)
+            c_dets = np.hstack((c_bboxes, c_scores[:, np.newaxis])).astype(np.float32, copy=False)
             if args.dataset == 'VOC':
                 cpu = False
             else:
@@ -423,6 +430,7 @@ def test_net(save_folder, net, detector, cuda, testset, transform, max_per_image
             keep = keep[:50]
             c_dets = c_dets[keep, :]
             all_boxes[j][i] = c_dets
+
         if max_per_image > 0:
             image_scores = np.hstack([all_boxes[j][i][:, -1] for j in range(1, num_classes)])
             if len(image_scores) > max_per_image:
@@ -434,8 +442,7 @@ def test_net(save_folder, net, detector, cuda, testset, transform, max_per_image
         nms_time = _t['misc'].toc()
 
         if i % 20 == 0:
-            print('im_detect: {:d}/{:d} {:.3f}s {:.3f}s'
-                  .format(i + 1, num_images, detect_time, nms_time))
+            print('im_detect: {:d}/{:d} {:.3f}s {:.3f}s'.format(i + 1, num_images, detect_time, nms_time))
             _t['im_detect'].clear()
             _t['misc'].clear()
 

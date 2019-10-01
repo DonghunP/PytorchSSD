@@ -130,8 +130,7 @@ class ObjectDetector:
             c_bboxes = boxes[inds]
             c_scores = scores[inds, j]
             print(scores[:, j])
-            c_dets = np.hstack((c_bboxes, c_scores[:, np.newaxis])).astype(
-                np.float32, copy=False)
+            c_dets = np.hstack((c_bboxes, c_scores[:, np.newaxis])).astype(np.float32, copy=False)
             # keep = nms(c_bboxes,c_scores)
 
             keep = py_cpu_nms(c_dets, 0.45)

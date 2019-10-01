@@ -12,13 +12,14 @@ class BasicConv(nn.Module):
                  bn=False, bias=True, up_size=0):
         super(BasicConv, self).__init__()
         self.out_channels = out_planes
+        self.kernel_size = kernel_size
         self.conv = nn.Conv2d(in_planes, out_planes, kernel_size=kernel_size, stride=stride, padding=padding,
                               dilation=dilation, groups=groups, bias=bias)
         self.bn = nn.BatchNorm2d(out_planes, eps=1e-5, momentum=0.01, affine=True) if bn else None
         self.relu = nn.ReLU(inplace=True) if relu else None
         self.up_size = up_size
-        self.up_sample = nn.Upsample(size=(up_size, up_size), mode='bilinear') if up_size != 0 else None
-
+        self.up_sample = nn.Upsample(size=(up_size, up_size), mode='bilinear') if up_size != 0 else None  # nn.Upsample --> nn.functional.interpolate
+                                                                                                                        # mode='bilinear' --> align_corners=False
     def forward(self, x):
         x = self.conv(x)
         if self.bn is not None:
@@ -46,18 +47,19 @@ class FSSD(nn.Module):
         head: "multibox head" consists of loc and conf conv layers
     """
 
-    def __init__(self, base, extras, ft_module, pyramid_ext, head, num_classes, size):
+    def __init__(self, vgg, extras, ff_layers, pyramid_ext, head, num_classes, size):
         super(FSSD, self).__init__()
         self.num_classes = num_classes
         # TODO: implement __call__ in PriorBox
         self.size = size
 
         # SSD network
-        self.base = nn.ModuleList(base)
+        self.vgg = nn.ModuleList(vgg)             # From list to nn.ModuleList!!!. (list is consist of Custom nn.Module layers)
         self.extras = nn.ModuleList(extras)
-        self.ft_module = nn.ModuleList(ft_module)
+        self.ff_layers = nn.ModuleList(ff_layers) # It is just 3 convolution layers!!!
+
         self.pyramid_ext = nn.ModuleList(pyramid_ext)
-        self.fea_bn = nn.BatchNorm2d(256 * len(self.ft_module), affine=True)
+        self.fea_bn = nn.BatchNorm2d(256 * len(self.ff_layers), affine=True)
 
         self.loc = nn.ModuleList(head[0])
         self.conf = nn.ModuleList(head[1])
@@ -89,28 +91,32 @@ class FSSD(nn.Module):
         conf = list()
 
         # apply vgg up to conv4_3 relu
-        for k in range(23):
-            x = self.base[k](x)
+        for k in range(22):
+            x = self.vgg[k](x)
 
         source_features.append(x)
 
         # apply vgg up to fc7
-        for k in range(23, len(self.base)):
-            x = self.base[k](x)
+        for k in range(22, len(self.vgg)):
+            x = self.vgg[k](x)
         source_features.append(x)
 
         # apply extra layers and cache source layer outputs
         for k, v in enumerate(self.extras):
             x = F.relu(v(x), inplace=True)
+
         source_features.append(x)
-        assert len(self.ft_module) == len(source_features)
-        for k, v in enumerate(self.ft_module):
-            transformed_features.append(v(source_features[k]))
+        assert len(self.ff_layers) == len(source_features) # Is it the same size that after 'size(3 feature maps) == size(3 filters)'.
+        for i, conv in enumerate(self.ff_layers):
+            transformed_features.append(conv(source_features[i]))
+
         concat_fea = torch.cat(transformed_features, 1)
-        x = self.fea_bn(concat_fea)
+        #print('concat_fea : ', concat_fea.data) #([8, 256*3, 38,38])
+        x = self.fea_bn(concat_fea) # plz refer paper.
+
         pyramid_fea = list()
-        for k, v in enumerate(self.pyramid_ext):
-            x = v(x)
+        for i, conv in enumerate(self.pyramid_ext):
+            x = conv(x)
             pyramid_fea.append(x)
 
         # apply multibox head to source layers
@@ -150,8 +156,7 @@ def add_extras(cfg, i, batch_norm=False):
     for k, v in enumerate(cfg):
         if in_channels != 'S':
             if v == 'S':
-                layers += [nn.Conv2d(in_channels, cfg[k + 1],
-                                     kernel_size=(1, 3)[flag], stride=2, padding=1)]
+                layers += [nn.Conv2d(in_channels, cfg[k + 1], kernel_size=(1, 3)[flag], stride=2, padding=1)]
             else:
                 layers += [nn.Conv2d(in_channels, v, kernel_size=(1, 3)[flag])]
             flag = not flag
@@ -159,20 +164,47 @@ def add_extras(cfg, i, batch_norm=False):
     return layers
 
 
-def feature_transform_module(vgg, extral, size):
+def feature_transform_module(vgg, extras, size):
     if size == 300:
         up_size = 38
     elif size == 512:
         up_size = 64
 
-    layers = []
+    ff_layers = []
     # conv4_3
-    layers += [BasicConv(vgg[24].out_channels, 256, kernel_size=1, padding=0)]
+    ff_layers += [BasicConv(vgg[21].out_channels, 256, kernel_size=1, padding=0)] #24 -> 21
+    #print('vgg[24].out_channels: ',vgg[24].out_channels, 'vgg[24].kernel_size: ',vgg[24].kernel_size)
     # fc_7
-    layers += [BasicConv(vgg[-2].out_channels, 256, kernel_size=1, padding=0, up_size=up_size)]
-    layers += [BasicConv(extral[-1].out_channels, 256, kernel_size=1, padding=0, up_size=up_size)]
-    return vgg, extral, layers
+    ff_layers += [BasicConv(vgg[-2].out_channels, 256, kernel_size=1, padding=0, up_size=up_size)]
+    #print('vgg[-2].out_channels: ', vgg[-2].out_channels, 'vgg[-2].kernel_size: ',vgg[-2].kernel_size)
+    # conv8_2
+    ff_layers += [BasicConv(extras[-1].out_channels, 256, kernel_size=1, padding=0, up_size=up_size)]
+    #print('extral[-1].out_channels: ',extras[-1].out_channels)
+    return vgg, extras, ff_layers
 
+extras = {
+    '300': [256, 512, 128, 'S', 256],
+    '512': [256, 512, 128, 'S', 256],
+}
+mbox = {
+    '300': [6, 6, 6, 6, 4, 4],  # number of boxes per feature map location
+    '512': [6, 6, 6, 6, 6, 4, 4],
+}
+print('vgg : \n')
+for idx, i in enumerate(vgg(vgg_base['300'], 3)):
+    print(idx, i)
+print('add_extras : \n')
+for idx, i in enumerate(add_extras(extras['300'], 1024)):
+    print(idx," ", i)
+
+# original_extras = {
+#     '300': [256, 'S', 512, 128, 'S', 256, 128, 256, 128, 256],
+#     '512': [],
+# }
+# original_mbox = {
+#     '300': [4, 6, 6, 6, 4, 4],  # number of boxes per feature map location
+#     '512': [],
+# }
 
 def pyramid_feature_extractor(size):
     if size == 300:
@@ -203,18 +235,9 @@ def multibox(fea_channels, cfg, num_classes):
     return (loc_layers, conf_layers)
 
 
-extras = {
-    '300': [256, 512, 128, 'S', 256],
-    '512': [256, 512, 128, 'S', 256],
-}
-mbox = {
-    '300': [6, 6, 6, 6, 4, 4],  # number of boxes per feature map location
-    '512': [6, 6, 6, 6, 6, 4, 4],
-}
 fea_channels = {
     '300': [512, 512, 256, 256, 256, 256],
     '512': [512, 512, 256, 256, 256, 256, 256]}
-
 
 def build_net(size=300, num_classes=21):
     if size != 300 and size != 512:

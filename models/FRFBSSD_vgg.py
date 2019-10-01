@@ -48,23 +48,26 @@ class FRFBSSD(nn.Module):
         head: "multibox head" consists of loc and conf conv layers
     """
 
-    def __init__(self, base, extras, ft_module, pyramid_ext, head, num_classes):
+    def __init__(self, vgg, extras, ff_layers, pyramid_ext, head, num_classes):
         super(FRFBSSD, self).__init__()
         self.num_classes = num_classes
         # TODO: implement __call__ in PriorBox
         self.size = 300
 
         # SSD network
-        self.base = nn.ModuleList(base)
+        self.vgg = nn.ModuleList(vgg)
         # Layer learns to scale the l2 normalized features from conv4_3
         self.L2Norm = L2Norm(512, 20)
         self.Norm = BasicRFB_a(256 * 2, 256 * 2, stride=1, scale=1.0)
         self.extras = nn.ModuleList(extras)
-        self.ft_module = nn.ModuleList(ft_module)
+        self.ff_layers = nn.ModuleList(ff_layers)
+
         self.pyramid_ext = nn.ModuleList(pyramid_ext)
-        self.fea_bn = nn.BatchNorm2d(256 * len(self.ft_module), affine=True)
+        self.fea_bn = nn.BatchNorm2d(256 * len(self.ff_layers), affine=True)
+
         self.loc = nn.ModuleList(head[0])
         self.conf = nn.ModuleList(head[1])
+
         self.softmax = nn.Softmax()
 
     def forward(self, x, test=False):
@@ -93,28 +96,31 @@ class FRFBSSD(nn.Module):
 
         # apply vgg up to conv4_3 relu
         for k in range(23):
-            x = self.base[k](x)
+            x = self.vgg[k](x)
 
         source_features.append(x)
 
         # apply vgg up to fc7
-        for k in range(23, len(self.base)):
-            x = self.base[k](x)
+        for k in range(23, len(self.vgg)):
+            x = self.vgg[k](x)
         source_features.append(x)
 
         # apply extra layers and cache source layer outputs
         for k, v in enumerate(self.extras):
             x = F.relu(v(x), inplace=True)
+
         source_features.append(x)
-        assert len(self.ft_module) == len(source_features)
-        for k, v in enumerate(self.ft_module):
+        assert len(self.ff_layers) == len(source_features)
+        for k, v in enumerate(self.ff_layers):
             transformed_features.append(v(source_features[k]))
+
         concat_fea = torch.cat(transformed_features, 1)
         x = self.fea_bn(concat_fea)
+
         pyramid_fea = list()
-        for k, v in enumerate(self.pyramid_ext):
-            x = v(x)
-            if k == 0:
+        for i, conv in enumerate(self.pyramid_ext):
+            x = conv(x)
+            if i == 0:
                 rbf_x = self.Norm(x)
                 pyramid_fea.append(rbf_x)
             else:
@@ -172,6 +178,7 @@ def feature_transform_module(vgg, extral):
     layers += [BasicConv(vgg[24].out_channels, 256, kernel_size=1, padding=0)]
     # fc_7
     layers += [BasicConv(vgg[-2].out_channels, 256, kernel_size=1, padding=0, up_size=38)]
+    # conv8_2
     layers += [BasicConv(extral[-1].out_channels, 256, kernel_size=1, padding=0, up_size=38)]
     return vgg, extral, layers
 
