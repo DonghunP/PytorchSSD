@@ -184,7 +184,7 @@ def conv3_3(vgg, size):
         up_size = 64
 
     ff_layers = []
-    ff_layers += [BasicConv(vgg[14].out_channels, 512, stride=2, kernel_size=1, padding=0)] #24 -> 21
+    ff_layers += [BasicConv(vgg[14].out_channels, 512, stride=2, kernel_size=1, padding=0, bn=True)] #24 -> 21
     return ff_layers
 
 def build_net(size=300, num_classes=21):
