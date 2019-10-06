@@ -56,7 +56,7 @@ class SSD(nn.Module):
         self.vgg = nn.ModuleList(base)
         # Layer learns to scale the l2 normalized features from conv4_3
         self.extras = nn.ModuleList(extras)
-        self.L2Norm = L2Norm(512, 20)
+        self.L2Norm = L2Norm(256, 20)
         self.conv3_3 = conv3_3
         self.conv_cr = conv_cr
         self.fea_bn = nn.BatchNorm2d(512, affine=True)
@@ -112,8 +112,9 @@ class SSD(nn.Module):
             #features_tmp.append(self.L2Norm(s))
             features_tmp.append(s)
 
-        s2 = self.fea_bn(torch.cat(features_tmp, 1))
-        features.append(s2)
+        x = self.fea_bn(torch.cat(features_tmp, 1))
+        #s2 = torch.cat(features_tmp, 1)
+        features.append(x)
         # -------------------------------------------------------------------------------------------------------------#
 
         # apply vgg up to fc7

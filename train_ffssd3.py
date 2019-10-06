@@ -51,7 +51,7 @@ parser.add_argument('-we', '--warm_epoch', default=6, type=int, help='max epoch 
 parser.add_argument('--gamma', default=0.1, type=float, help='Gamma update for SGD')
 parser.add_argument('--log_iters', default=True, type=bool, help='Print the loss at each iteration')
 parser.add_argument('--save_folder', default='weights/', help='Location to save checkpoint models')
-parser.add_argument('--date', default='1006')
+parser.add_argument('--date', default='1008')
 parser.add_argument('--save_frequency', default=40)
 parser.add_argument('--retest', default=False, type=bool, help='test cache results')
 parser.add_argument('--test_frequency', default=40)
@@ -87,7 +87,7 @@ elif args.version == 'RFB_mobile':
 elif args.version == 'SSD_vgg':
     from models.SSD_vgg import build_net
 elif args.version == 'FFSSD_vgg':
-    from models.FFSSD_vgg_concat import build_net
+    from models.FFSSD_vgg_element_sum import build_net
 elif args.version == 'FSSD_vgg':
     from models.FSSD_vgg import build_net
 elif args.version == 'FRFBSSD_vgg':

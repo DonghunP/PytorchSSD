@@ -105,14 +105,20 @@ class SSD(nn.Module):
         # apply vgg up to conv4_3 relu
         for k in range(16, 23):
             x = self.vgg[k](x)
-
+        features_tmp.append(x)
         # -------------------------------------------------------------------------------------------------------------#
-        for i, conv in enumerate(self.conv_cr):
-            s = conv(x)
-            #features_tmp.append(self.L2Norm(s))
-            features_tmp.append(s)
+        # for i, conv in enumerate(self.conv_cr):
+        #     s = conv(x)
+        #     #features_tmp.append(self.L2Norm(s))
+        #     features_tmp.append(s)
 
-        s2 = self.fea_bn(torch.cat(features_tmp, 1))
+        #x = self.fea_bn(torch.cat(features_tmp, 1))
+        # a = features_tmp[0]
+        # b = features_tmp[1]
+        # e = a + b
+        # c = torch.cat(features_tmp, 1)
+        # d = torch.sum(c, dim=1)
+        s2 = self.fea_bn(features_tmp[0] + features_tmp[1])
         features.append(s2)
         # -------------------------------------------------------------------------------------------------------------#
 
@@ -204,7 +210,7 @@ def conv3_3(vgg, size):
         up_size = 64
 
     ff_layers = []
-    ff_layers += [BasicConv(vgg[14].out_channels, 256, stride=2, kernel_size=1, padding=0, bn=True)] #24 -> 21
+    ff_layers += [BasicConv(vgg[14].out_channels, 512, stride=2, kernel_size=1, padding=0, bn=True)] #24 -> 21
     return ff_layers
 
 def conv_cr(vgg, size):
@@ -214,7 +220,7 @@ def conv_cr(vgg, size):
         up_size = 64
 
     ff_layers = []
-    ff_layers += [BasicConv(vgg[21].out_channels, 256, stride=1, kernel_size=1, padding=0, bn=True)] #24 -> 21
+    ff_layers += [BasicConv(vgg[21].out_channels, 512, stride=1, kernel_size=1, padding=0, bn=True)] #24 -> 21
     return ff_layers
 
 def build_net(size=300, num_classes=21):

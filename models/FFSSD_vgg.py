@@ -46,7 +46,7 @@ class SSD(nn.Module):
         head: "multibox head" consists of loc and conf conv layers
     """
 
-    def __init__(self, base, extras, head, conv3_3, num_classes,size):
+    def __init__(self, base, extras, head, conv3_3, conv_cr, num_classes,size):
         super(SSD, self).__init__()
         self.num_classes = num_classes
         # TODO: implement __call__ in PriorBox
@@ -56,8 +56,11 @@ class SSD(nn.Module):
         self.vgg = nn.ModuleList(base)
         # Layer learns to scale the l2 normalized features from conv4_3
         self.extras = nn.ModuleList(extras)
-        self.L2Norm = L2Norm(512, 20)
+        #self.L2Norm = L2Norm(512, 20)
         self.conv3_3 = conv3_3
+        self.conv_cr = conv_cr
+        self.fea_bn = nn.BatchNorm2d(512, affine=True)
+        self.relu = nn.ReLU(inplace=False)  # True->False
 
         self.loc = nn.ModuleList(head[0])
         self.conf = nn.ModuleList(head[1])
@@ -84,20 +87,38 @@ class SSD(nn.Module):
                     3: priorbox layers, Shape: [2,num_priors*4]
         """
         features = list()
+        features_tmp = list()
         loc = list()
         conf = list()
 
-        # apply vgg up to conv4_3 relu
-        for k in range(15):
+        # apply vgg up to conv3_3 relu
+        for k in range(16):
             x = self.vgg[k](x)
 
-
+        # -------------------------------------------------------------------------------------------------------------#
         for i, conv in enumerate(self.conv3_3):
             s = conv(x)
-            features.append(self.L2Norm(s))
+            #features_tmp.append(self.L2Norm(s))
+            features_tmp.append(s)
+        # -------------------------------------------------------------------------------------------------------------#
+
+        # apply vgg up to conv4_3 relu
+        for k in range(16, 23):
+            x = self.vgg[k](x)
+
+        # -------------------------------------------------------------------------------------------------------------#
+        for i, conv in enumerate(self.conv_cr):
+            s = conv(x)
+            #features_tmp.append(self.L2Norm(s))
+            features_tmp.append(s)
+
+        #x = self.fea_bn(torch.cat(features_tmp, 1))
+        x = self.fea_bn(torch.sum(features_tmp))
+        features.append(x)
+        # -------------------------------------------------------------------------------------------------------------#
 
         # apply vgg up to fc7
-        for k in range(15, len(self.vgg)):
+        for k in range(23, len(self.vgg)):
             x = self.vgg[k](x)
         features.append(x)
 
@@ -158,7 +179,7 @@ def add_extras(cfg, i, batch_norm=False, size=300):
 def multibox(vgg, extra_layers, cfg, num_classes):
     loc_layers = []
     conf_layers = []
-    vgg_source = [14, -2] # [24, -2] -> [21, -2] -> [14, -2]
+    vgg_source = [21, -2] # [24, -2] -> [21, -2] -> [14, -2]
     for k, v in enumerate(vgg_source):
         loc_layers += [nn.Conv2d(vgg[v].out_channels, cfg[k] * 4, kernel_size=3, padding=1)] # Why 24? If 24 then, vgg[v].out_channels might be '512' isn't it??
         conf_layers += [nn.Conv2d(vgg[v].out_channels, cfg[k] * num_classes, kernel_size=3, padding=1)]
@@ -187,6 +208,16 @@ def conv3_3(vgg, size):
     ff_layers += [BasicConv(vgg[14].out_channels, 512, stride=2, kernel_size=1, padding=0, bn=True)] #24 -> 21
     return ff_layers
 
+def conv_cr(vgg, size):
+    if size == 300:
+        up_size = 38
+    elif size == 512:
+        up_size = 64
+
+    ff_layers = []
+    ff_layers += [BasicConv(vgg[21].out_channels, 512, stride=1, kernel_size=1, padding=0, bn=True)] #24 -> 21
+    return ff_layers
+
 def build_net(size=300, num_classes=21):
     if size != 300 and size != 512:
         print("Error: Sorry only SSD300 and SSD512 is supported currently!")
@@ -194,4 +225,5 @@ def build_net(size=300, num_classes=21):
 
     return SSD(*multibox(vgg(vgg_base[str(size)], 3), add_extras(extras[str(size)], 1024, size=size), mbox[str(size)], num_classes),
                conv3_3(vgg(vgg_base[str(size)], 3), size),
+               conv_cr(vgg(vgg_base[str(size)], 3), size),
                num_classes=num_classes,size=size)
