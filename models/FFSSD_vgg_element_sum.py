@@ -6,13 +6,14 @@ import torch.nn.functional as F
 from layers import *
 from .base_models import vgg, vgg_base
 
+from RFB_Net_vgg import BasicRFB, BasicRFB_a
+
 class BasicConv(nn.Module):
 
     def __init__(self, in_planes, out_planes, kernel_size, stride=1, padding=0, dilation=1, groups=1, relu=False,
                  bn=False, bias=True, up_size=0):
         super(BasicConv, self).__init__()
         self.out_channels = out_planes
-        self.kernel_size = kernel_size
         self.conv = nn.Conv2d(in_planes, out_planes, kernel_size=kernel_size, stride=stride, padding=padding, dilation=dilation, groups=groups, bias=bias)
         self.bn = nn.BatchNorm2d(out_planes, eps=1e-5, momentum=0.01, affine=True) if bn else None
         self.relu = nn.ReLU(inplace=False) if relu else None # True->False
@@ -56,11 +57,14 @@ class SSD(nn.Module):
         self.vgg = nn.ModuleList(base)
         # Layer learns to scale the l2 normalized features from conv4_3
         self.extras = nn.ModuleList(extras)
-        self.L2Norm = L2Norm(512, 20)
+        #self.L2Norm = L2Norm(512, 20)
         self.conv3_3 = conv3_3
         self.conv_cr = conv_cr
         self.fea_bn = nn.BatchNorm2d(512, affine=True)
         self.relu = nn.ReLU(inplace=False)  # True->False
+
+        # FFSSD + RBF Block
+        self.Norm = BasicRFB_a(512, 512, stride=1, scale=1.0)
 
         self.loc = nn.ModuleList(head[0])
         self.conf = nn.ModuleList(head[1])
@@ -98,7 +102,6 @@ class SSD(nn.Module):
         # -------------------------------------------------------------------------------------------------------------#
         for i, conv in enumerate(self.conv3_3):
             s = conv(x)
-            #features_tmp.append(self.L2Norm(s))
             features_tmp.append(s)
         # -------------------------------------------------------------------------------------------------------------#
 
@@ -119,6 +122,7 @@ class SSD(nn.Module):
         # c = torch.cat(features_tmp, 1)
         # d = torch.sum(c, dim=1)
         s2 = self.fea_bn(features_tmp[0] + features_tmp[1])
+        s2 = self.Norm(s2) # FFSSD + RBF Block
         features.append(s2)
         # -------------------------------------------------------------------------------------------------------------#
 

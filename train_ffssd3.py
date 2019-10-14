@@ -37,10 +37,10 @@ parser.add_argument('-s', '--size', default='300', help='300 or 512 input size.'
 parser.add_argument('-d', '--dataset', default='VOC', help='VOC or COCO dataset')
 parser.add_argument('--basenet', default='weights/vgg16_reducedfc.pth', help='pretrained base model')
 parser.add_argument('--jaccard_threshold', default=0.5, type=float, help='Min Jaccard index for matching')
-parser.add_argument('-b', '--batch_size', default=16, type=int, help='Batch size for training')
+parser.add_argument('-b', '--batch_size', default=64, type=int, help='Batch size for training')
 parser.add_argument('--num_workers', default=4, type=int, help='Number of workers used in dataloading')
 parser.add_argument('--cuda', default=True, type=bool, help='Use cuda to train model')
-parser.add_argument('--ngpu', default=1, type=int, help='gpus')
+parser.add_argument('--ngpu', default=3, type=int, help='gpus')
 parser.add_argument('--lr', '--learning-rate', default=4e-3, type=float, help='initial learning rate')
 parser.add_argument('--momentum', default=0.9, type=float, help='momentum')
 parser.add_argument('--resume_net', default=False, help='resume net for retraining')
@@ -51,7 +51,7 @@ parser.add_argument('-we', '--warm_epoch', default=6, type=int, help='max epoch 
 parser.add_argument('--gamma', default=0.1, type=float, help='Gamma update for SGD')
 parser.add_argument('--log_iters', default=True, type=bool, help='Print the loss at each iteration')
 parser.add_argument('--save_folder', default='weights/', help='Location to save checkpoint models')
-parser.add_argument('--date', default='1008')
+parser.add_argument('--date', default='1014')
 parser.add_argument('--save_frequency', default=40)
 parser.add_argument('--retest', default=False, type=bool, help='test cache results')
 parser.add_argument('--test_frequency', default=40)
@@ -273,7 +273,7 @@ def train():
                 top_k = (300, 200)[args.dataset == 'COCO']
                 if args.dataset == 'VOC':
                     # net.module.size -> net.size.
-                    APs, mAP = test_net(test_save_dir, net, detector, args.cuda, testset, BaseTransform(net.size, rgb_means, rgb_std, (2, 0, 1)), top_k, thresh=0.01)
+                    APs, mAP = test_net(test_save_dir, net, detector, args.cuda, testset, BaseTransform(net.module.size, rgb_means, rgb_std, (2, 0, 1)), top_k, thresh=0.01)
                     APs = [str(num) for num in APs]
                     mAP = str(mAP)
                     log_file.write(str(iteration) + ' APs:\n' + '\n'.join(APs))
@@ -288,7 +288,7 @@ def train():
                     # -------------------------------------------------------------------------------------------------------------------- #
 
                 else:
-                    test_net(test_save_dir, net, detector, args.cuda, testset, BaseTransform(net.size, rgb_means, rgb_std, (2, 0, 1)), top_k, thresh=0.01)
+                    test_net(test_save_dir, net, detector, args.cuda, testset, BaseTransform(net.module.size, rgb_means, rgb_std, (2, 0, 1)), top_k, thresh=0.01)
                 net.train()
 
             epoch += 1
